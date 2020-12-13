@@ -11,14 +11,15 @@ with open(os.path.join(os.path.dirname(__file__), "README.rst")) as f:
 setup(
     name="ptpython",
     author="Jonathan Slenders",
-    version="3.0.2",
+    version="3.0.7",
     url="https://github.com/prompt-toolkit/ptpython",
     description="Python REPL build on top of prompt_toolkit",
     long_description=long_description,
     packages=find_packages("."),
     install_requires=[
         "appdirs",
-        "jedi>=0.9.0",
+        "importlib_metadata;python_version<'3.8'",
+        "jedi>=0.16.0",
         "prompt_toolkit>=3.0.0,<3.1.0",
         "pygments",
     ],

@@ -6,7 +6,7 @@ import __future__
 
 from asyncio import get_event_loop
 from functools import partial
-from typing import Any, Callable, Dict, Generic, List, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Dict, Generic, List, Optional, TypeVar
 
 from prompt_toolkit.application import Application, get_app
 from prompt_toolkit.auto_suggest import (
@@ -51,7 +51,7 @@ from prompt_toolkit.utils import is_windows
 from prompt_toolkit.validation import ConditionalValidator, Validator
 from pygments.lexers import Python3Lexer as PythonLexer
 
-from .completer import PythonCompleter
+from .completer import CompletePrivateAttributes, HidePrivateCompleter, PythonCompleter
 from .history_browser import PythonHistory
 from .key_bindings import (
     load_confirm_exit_bindings,
@@ -66,7 +66,18 @@ from .validator import PythonValidator
 
 __all__ = ["PythonInput"]
 
-_T = TypeVar("_T")
+
+if TYPE_CHECKING:
+    from typing_extensions import Protocol
+
+    class _SupportsLessThan(Protocol):
+        # Taken from typeshed. _T is used by "sorted", which needs anything
+        # sortable.
+        def __lt__(self, __other: Any) -> bool:
+            ...
+
+
+_T = TypeVar("_T", bound="_SupportsLessThan")
 
 
 class OptionCategory:
@@ -180,13 +191,17 @@ class PythonInput:
         self.get_globals: _GetNamespace = get_globals or (lambda: {})
         self.get_locals: _GetNamespace = get_locals or self.get_globals
 
-        self._completer = _completer or FuzzyCompleter(
-            PythonCompleter(
-                self.get_globals,
-                self.get_locals,
-                lambda: self.enable_dictionary_completion,
+        self._completer = HidePrivateCompleter(
+            _completer
+            or FuzzyCompleter(
+                PythonCompleter(
+                    self.get_globals,
+                    self.get_locals,
+                    lambda: self.enable_dictionary_completion,
+                ),
+                enable_fuzzy=Condition(lambda: self.enable_fuzzy_completion),
             ),
-            enable_fuzzy=Condition(lambda: self.enable_fuzzy_completion),
+            lambda: self.complete_private_attributes,
         )
         self._validator = _validator or PythonValidator(self.get_compiler_flags)
         self._lexer = _lexer or PygmentsLexer(PythonLexer)
@@ -209,15 +224,21 @@ class PythonInput:
         self.show_signature: bool = False
         self.show_docstring: bool = False
         self.show_meta_enter_message: bool = True
-        self.completion_visualisation: CompletionVisualisation = CompletionVisualisation.MULTI_COLUMN
+        self.completion_visualisation: CompletionVisualisation = (
+            CompletionVisualisation.MULTI_COLUMN
+        )
         self.completion_menu_scroll_offset: int = 1
 
         self.show_line_numbers: bool = False
         self.show_status_bar: bool = True
         self.wrap_lines: bool = True
         self.complete_while_typing: bool = True
-        self.paste_mode: bool = False  # When True, don't insert whitespace after newline.
-        self.confirm_exit: bool = True  # Ask for confirmation when Control-D is pressed.
+        self.paste_mode: bool = (
+            False  # When True, don't insert whitespace after newline.
+        )
+        self.confirm_exit: bool = (
+            True  # Ask for confirmation when Control-D is pressed.
+        )
         self.accept_input_on_enter: int = 2  # Accept when pressing Enter 'n' times.
         # 'None' means that meta-enter is always required.
         self.enable_open_in_editor: bool = True
@@ -233,6 +254,9 @@ class PythonInput:
         self.enable_syntax_highlighting: bool = True
         self.enable_fuzzy_completion: bool = False
         self.enable_dictionary_completion: bool = False
+        self.complete_private_attributes: CompletePrivateAttributes = (
+            CompletePrivateAttributes.ALWAYS
+        )
         self.swap_light_and_dark: bool = False
         self.highlight_matching_parenthesis: bool = False
         self.show_sidebar: bool = False  # Currently show the sidebar.
@@ -248,6 +272,7 @@ class PythonInput:
 
         self.exit_message: str = "Do you really want to exit?"
         self.insert_blank_line_after_output: bool = True  # (For the REPL.)
+        self.insert_blank_line_after_input: bool = False  # (For the REPL.)
 
         # The buffers.
         self.default_buffer = self._create_buffer()
@@ -299,6 +324,12 @@ class PythonInput:
         # Boolean indicating whether we have a signatures thread running.
         # (Never run more than one at the same time.)
         self._get_signatures_thread_running: bool = False
+
+        # Get into Vi navigation mode at startup
+        self.vi_start_in_navigation_mode: bool = False
+
+        # Preserve last used Vi input mode between main loop iterations
+        self.vi_keep_last_used_mode: bool = False
 
         self.style_transformation = merge_style_transformations(
             [
@@ -361,8 +392,18 @@ class PythonInput:
         flags = 0
 
         for value in self.get_globals().values():
-            if isinstance(value, __future__._Feature):
-                flags |= value.compiler_flag
+            try:
+                if isinstance(value, __future__._Feature):
+                    f = value.compiler_flag
+                    flags |= f
+            except BaseException:
+                # get_compiler_flags should never raise to not run into an
+                # `Unhandled exception in event loop`
+
+                # See: https://github.com/prompt-toolkit/ptpython/issues/351
+                # An exception can be raised when some objects in the globals
+                # raise an exception in a custom `__getattribute__`.
+                pass
 
         return flags
 
@@ -508,6 +549,31 @@ class PythonInput:
                         },
                     ),
                     Option(
+                        title="Complete private attrs",
+                        description="Show or hide private attributes in the completions. "
+                        "'If no public' means: show private attributes only if no public "
+                        "matches are found or if an underscore was typed.",
+                        get_current_value=lambda: {
+                            CompletePrivateAttributes.NEVER: "Never",
+                            CompletePrivateAttributes.ALWAYS: "Always",
+                            CompletePrivateAttributes.IF_NO_PUBLIC: "If no public",
+                        }[self.complete_private_attributes],
+                        get_values=lambda: {
+                            "Never": lambda: enable(
+                                "complete_private_attributes",
+                                CompletePrivateAttributes.NEVER,
+                            ),
+                            "Always": lambda: enable(
+                                "complete_private_attributes",
+                                CompletePrivateAttributes.ALWAYS,
+                            ),
+                            "If no public": lambda: enable(
+                                "complete_private_attributes",
+                                CompletePrivateAttributes.IF_NO_PUBLIC,
+                            ),
+                        },
+                    ),
+                    Option(
                         title="Enable fuzzy completion",
                         description="Enable fuzzy completion.",
                         get_current_value=lambda: ["off", "on"][
@@ -617,6 +683,11 @@ class PythonInput:
                             (s, partial(enable, "prompt_style", s))
                             for s in self.all_prompt_styles
                         ),
+                    ),
+                    simple_option(
+                        title="Blank line after input",
+                        description="Insert a blank line after the input.",
+                        field_name="insert_blank_line_after_input",
                     ),
                     simple_option(
                         title="Blank line after output",
@@ -831,7 +902,7 @@ class PythonInput:
             # Show signatures in help text.
             if script:
                 try:
-                    signatures = script.call_signatures()
+                    signatures = script.get_signatures()
                 except ValueError:
                     # e.g. in case of an invalid \\x escape.
                     signatures = []
@@ -891,8 +962,9 @@ class PythonInput:
 
         history = PythonHistory(self, self.default_buffer.document)
 
-        from prompt_toolkit.application import in_terminal
         import asyncio
+
+        from prompt_toolkit.application import in_terminal
 
         async def do_in_terminal() -> None:
             async with in_terminal():

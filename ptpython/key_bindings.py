@@ -149,8 +149,8 @@ def load_python_bindings(python_input):
         empty_lines_required = python_input.accept_input_on_enter or 10000
 
         def at_the_end(b):
-            """ we consider the cursor at the end when there is no text after
-            the cursor, or only whitespace. """
+            """we consider the cursor at the end when there is no text after
+            the cursor, or only whitespace."""
             text = b.document.text_after_cursor
             return text == "" or (text.isspace() and not "\n" in text)
 
@@ -187,7 +187,12 @@ def load_python_bindings(python_input):
         Override Control-D exit, to ask for confirmation.
         """
         if python_input.confirm_exit:
+            # Show exit confirmation and focus it (focusing is important for
+            # making sure the default buffer key bindings are not active).
             python_input.show_exit_confirmation = True
+            python_input.app.layout.focus(
+                python_input.ptpython_layout.exit_confirmation
+            )
         else:
             event.app.exit(exception=EOFError)
 
@@ -279,6 +284,7 @@ def load_confirm_exit_bindings(python_input):
         Cancel exit.
         """
         python_input.show_exit_confirmation = False
+        python_input.app.layout.focus_previous()
 
     return bindings
 

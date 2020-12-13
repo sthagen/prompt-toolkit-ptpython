@@ -18,9 +18,16 @@ class PythonValidator(Validator):
         """
         Check input for Python syntax errors.
         """
+        text = document.text
+
+        # If the input is single line, remove leading whitespace.
+        # (This doesn't have to be a syntax error.)
+        if len(text.splitlines()) == 1:
+            text = text.strip()
+
         # When the input starts with Ctrl-Z, always accept. This means EOF in a
         # Python REPL.
-        if document.text.startswith("\x1a"):
+        if text.startswith("\x1a"):
             return
 
         try:
@@ -29,7 +36,7 @@ class PythonValidator(Validator):
             else:
                 flags = 0
 
-            compile(document.text, "<input>", "exec", flags=flags, dont_inherit=True)
+            compile(text, "<input>", "exec", flags=flags, dont_inherit=True)
         except SyntaxError as e:
             # Note, the 'or 1' for offset is required because Python 2.7
             # gives `None` as offset in case of '4=4' as input. (Looks like
@@ -37,7 +44,7 @@ class PythonValidator(Validator):
             index = document.translate_row_col_to_index(
                 e.lineno - 1, (e.offset or 1) - 1
             )
-            raise ValidationError(index, "Syntax Error")
+            raise ValidationError(index, f"Syntax Error: {e}")
         except TypeError as e:
             # e.g. "compile() expected string without null bytes"
             raise ValidationError(0, str(e))

@@ -1,7 +1,9 @@
 import ast
+import inspect
 import keyword
 import re
-from typing import TYPE_CHECKING, Any, Dict, Iterable
+from enum import Enum
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional
 
 from prompt_toolkit.completion import (
     CompleteEvent,
@@ -12,13 +14,24 @@ from prompt_toolkit.completion import (
 from prompt_toolkit.contrib.regular_languages.compiler import compile as compile_grammar
 from prompt_toolkit.contrib.regular_languages.completion import GrammarCompleter
 from prompt_toolkit.document import Document
+from prompt_toolkit.formatted_text import fragment_list_to_text, to_formatted_text
 
 from ptpython.utils import get_jedi_script_from_document
 
 if TYPE_CHECKING:
     from prompt_toolkit.contrib.regular_languages.compiler import _CompiledGrammar
 
-__all__ = ["PythonCompleter"]
+__all__ = ["PythonCompleter", "CompletePrivateAttributes", "HidePrivateCompleter"]
+
+
+class CompletePrivateAttributes(Enum):
+    """
+    Should we display private attributes in the completion pop-up?
+    """
+
+    NEVER = "NEVER"
+    IF_NO_PUBLIC = "IF_NO_PUBLIC"
+    ALWAYS = "ALWAYS"
 
 
 class PythonCompleter(Completer):
@@ -26,7 +39,9 @@ class PythonCompleter(Completer):
     Completer for Python code.
     """
 
-    def __init__(self, get_globals, get_locals, get_enable_dictionary_completion):
+    def __init__(
+        self, get_globals, get_locals, get_enable_dictionary_completion
+    ) -> None:
         super().__init__()
 
         self.get_globals = get_globals
@@ -35,8 +50,8 @@ class PythonCompleter(Completer):
 
         self.dictionary_completer = DictionaryCompleter(get_globals, get_locals)
 
-        self._path_completer_cache = None
-        self._path_completer_grammar_cache = None
+        self._path_completer_cache: Optional[GrammarCompleter] = None
+        self._path_completer_grammar_cache: Optional["_CompiledGrammar"] = None
 
     @property
     def _path_completer(self) -> GrammarCompleter:
@@ -158,7 +173,10 @@ class PythonCompleter(Completer):
 
             if script:
                 try:
-                    completions = script.completions()
+                    jedi_completions = script.complete(
+                        column=document.cursor_position_col,
+                        line=document.cursor_position_row + 1,
+                    )
                 except TypeError:
                     # Issue #9: bad syntax causes completions() to fail in jedi.
                     # https://github.com/jonathanslenders/python-prompt-toolkit/issues/9
@@ -196,12 +214,18 @@ class PythonCompleter(Completer):
                     # Supress all other Jedi exceptions.
                     pass
                 else:
-                    for c in completions:
+                    for jc in jedi_completions:
+                        if jc.type == "function":
+                            suffix = "()"
+                        else:
+                            suffix = ""
+
                         yield Completion(
-                            c.name_with_symbols,
-                            len(c.complete) - len(c.name_with_symbols),
-                            display=c.name_with_symbols,
-                            style=_get_style_for_name(c.name_with_symbols),
+                            jc.name_with_symbols,
+                            len(jc.complete) - len(jc.name_with_symbols),
+                            display=jc.name_with_symbols + suffix,
+                            display_meta=jc.type,
+                            style=_get_style_for_name(jc.name_with_symbols),
                         )
 
 
@@ -222,28 +246,30 @@ class DictionaryCompleter(Completer):
 
         # Pattern for expressions that are "safe" to eval for auto-completion.
         # These are expressions that contain only attribute and index lookups.
-        expression = r"""
+        varname = r"[a-zA-Z_][a-zA-Z0-9_]*"
+
+        expression = rf"""
             # Any expression safe enough to eval while typing.
             # No operators, except dot, and only other dict lookups.
             # Technically, this can be unsafe of course, if bad code runs
             # in `__getattr__` or ``__getitem__``.
             (
                 # Variable name
-                [a-zA-Z0-9_]+
+                {varname}
 
                 \s*
 
                 (?:
                     # Attribute access.
-                    \s* \. \s* [a-zA-Z0-9_]+ \s*
+                    \s* \. \s* {varname} \s*
 
                     |
 
                     # Item lookup.
-                    # (We match the square brackets. We don't care about
-                    # matching quotes here in the regex. Nested square brackets
-                    # are not supported.)
-                    \s* \[ [a-zA-Z0-9_'"\s]+ \] \s*
+                    # (We match the square brackets. The key can be anything.
+                    # We don't care about matching quotes here in the regex.
+                    # Nested square brackets are not supported.)
+                    \s* \[ [^\[\]]+ \] \s*
                 )*
             )
         """
@@ -276,7 +302,7 @@ class DictionaryCompleter(Completer):
                 # Dict loopup to complete (square bracket open + start of
                 # string).
                 \[
-                \s* ([a-zA-Z0-9_'"]*)$
+                \s* ([^\[\]]*)$
             """,
             re.VERBOSE,
         )
@@ -354,7 +380,9 @@ class DictionaryCompleter(Completer):
 
             if isinstance(result, (list, tuple, dict)):
                 yield Completion("[", 0)
-            elif result:
+            elif result is not None:
+                # Note: Don't call `if result` here. That can fail for types
+                #       that have custom truthness checks.
                 yield Completion(".", 0)
 
     def _get_item_lookup_completions(
@@ -366,6 +394,16 @@ class DictionaryCompleter(Completer):
         """
         Complete dictionary keys.
         """
+
+        def abbr_meta(text: str) -> str:
+            " Abbreviate meta text, make sure it fits on one line. "
+            # Take first line, if multiple lines.
+            if len(text) > 20:
+                text = text[:20] + "..."
+            if "\n" in text:
+                text = text.split("\n", 1)[0] + "..."
+            return text
+
         match = self.item_lookup_pattern.search(document.text_before_cursor)
         if match is not None:
             object_var, key = match.groups()
@@ -386,14 +424,14 @@ class DictionaryCompleter(Completer):
                         break
 
                 for k in result:
-                    if str(k).startswith(key_obj):
+                    if str(k).startswith(str(key_obj)):
                         try:
                             k_repr = self._do_repr(k)
                             yield Completion(
                                 k_repr + "]",
                                 -len(key),
                                 display=f"[{k_repr}]",
-                                display_meta=self._do_repr(result[k]),
+                                display_meta=abbr_meta(self._do_repr(result[k])),
                             )
                         except ReprFailedError:
                             pass
@@ -409,7 +447,7 @@ class DictionaryCompleter(Completer):
                                     k_repr + "]",
                                     -len(key),
                                     display=f"[{k_repr}]",
-                                    display_meta=self._do_repr(result[k]),
+                                    display_meta=abbr_meta(self._do_repr(result[k])),
                                 )
                             except ReprFailedError:
                                 pass
@@ -430,11 +468,84 @@ class DictionaryCompleter(Completer):
             # Do lookup of `object_var` in the context.
             result = self._lookup(object_var, temp_locals)
 
-            for name in dir(result):
+            names = self._sort_attribute_names(dir(result))
+
+            def get_suffix(name: str) -> str:
+                try:
+                    obj = getattr(result, name, None)
+                    if inspect.isfunction(obj):
+                        return "()"
+
+                    if isinstance(obj, dict):
+                        return "{}"
+                    if isinstance(obj, (list, tuple)):
+                        return "[]"
+                except:
+                    pass
+                return ""
+
+            for name in names:
                 if name.startswith(attr_name):
-                    yield Completion(
-                        name, -len(attr_name),
-                    )
+                    suffix = get_suffix(name)
+                    yield Completion(name, -len(attr_name), display=name + suffix)
+
+    def _sort_attribute_names(self, names: List[str]) -> List[str]:
+        """
+        Sort attribute names alphabetically, but move the double underscore and
+        underscore names to the end.
+        """
+
+        def sort_key(name: str):
+            if name.startswith("__"):
+                return (2, name)  # Double underscore comes latest.
+            if name.startswith("_"):
+                return (1, name)  # Single underscore before that.
+            return (0, name)  # Other names first.
+
+        return sorted(names, key=sort_key)
+
+
+class HidePrivateCompleter(Completer):
+    """
+    Wrapper around completer that hides private fields, deponding on whether or
+    not public fields are shown.
+
+    (The reason this is implemented as a `Completer` wrapper is because this
+    way it works also with `FuzzyCompleter`.)
+    """
+
+    def __init__(
+        self,
+        completer: Completer,
+        complete_private_attributes: Callable[[], CompletePrivateAttributes],
+    ) -> None:
+        self.completer = completer
+        self.complete_private_attributes = complete_private_attributes
+
+    def get_completions(
+        self, document: Document, complete_event: CompleteEvent
+    ) -> Iterable[Completion]:
+
+        completions = list(self.completer.get_completions(document, complete_event))
+        complete_private_attributes = self.complete_private_attributes()
+        hide_private = False
+
+        def is_private(completion: Completion) -> bool:
+            text = fragment_list_to_text(to_formatted_text(completion.display))
+            return text.startswith("_")
+
+        if complete_private_attributes == CompletePrivateAttributes.NEVER:
+            hide_private = True
+
+        elif complete_private_attributes == CompletePrivateAttributes.IF_NO_PUBLIC:
+            hide_private = any(not is_private(completion) for completion in completions)
+
+        if hide_private:
+            completions = [
+                completion for completion in completions if not is_private(completion)
+            ]
+
+        return completions
 
 
 class ReprFailedError(Exception):

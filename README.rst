@@ -50,6 +50,24 @@ Features
 [2] If the terminal supports it (most terminals do), this allows pasting
 without going into paste mode. It will keep the indentation.
 
+__pt_repr__: A nicer repr with colors
+*************************************
+
+When classes implement a ``__pt_repr__`` method, this will be used instead of
+``__repr__`` for printing. Any `prompt_toolkit "formatted text"
+<https://python-prompt-toolkit.readthedocs.io/en/master/pages/printing_text.html>`_
+can be returned from here. In order to avoid writing a ``__repr__`` as well,
+the ``ptpython.utils.ptrepr_to_repr`` decorator can be applied. For instance:
+
+.. code:: python
+
+    from ptpython.utils import ptrepr_to_repr
+    from prompt_toolkit.formatted_text import HTML
+
+    @ptrepr_to_repr
+    class MyClass:
+        def __pt_repr__(self):
+            return HTML('<yellow>Hello world!</yellow>')
 
 More screenshots
 ****************
@@ -131,7 +149,12 @@ navigation mode.
 Configuration
 *************
 
-It is possible to create a ``$XDG_CONFIG_HOME/ptpython/config.py`` file to customize the configuration.
+It is possible to create a ``config.py`` file to customize configuration.
+ptpython will look in an appropriate platform-specific directory via `appdirs
+<https://pypi.org/project/appdirs/>`. See the ``appdirs`` documentation for the
+precise location for your platform. A ``PTPYTHON_CONFIG_HOME`` environment
+variable, if set, can also be used to explicitly override where configuration
+is looked for.
 
 Have a look at this example to see what is possible:
 `config.py <https://github.com/jonathanslenders/ptpython/blob/master/examples/ptpython_config/config.py>`_
@@ -146,6 +169,13 @@ integration. Make sure that IPython has been installed. (``pip install
 ipython``)
 
 .. image :: https://github.com/jonathanslenders/ptpython/raw/master/docs/images/ipython.png
+
+This is also available for embedding:
+
+.. code:: python
+
+    from ptpython.ipython.repl import embed
+    embed(globals(), locals())
 
 
 Django support
@@ -201,7 +231,6 @@ Special thanks to
 
 - `Pygments <http://pygments.org/>`_: Syntax highlighter.
 - `Jedi <http://jedi.jedidjah.ch/en/latest/>`_: Autocompletion library.
-- `Docopt <http://docopt.org/>`_: Command-line interface description language.
 - `wcwidth <https://github.com/jquast/wcwidth>`_: Determine columns needed for a wide characters.
 - `prompt_toolkit <http://github.com/jonathanslenders/python-prompt-toolkit>`_ for the interface.
 

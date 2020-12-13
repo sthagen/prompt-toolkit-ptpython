@@ -11,8 +11,6 @@ The ``patch_stdout`` option makes sure that when another coroutine is writing
 to stdout, it won't break the input line, but instead writes nicely above the
 prompt.
 """
-from __future__ import unicode_literals
-
 import asyncio
 
 from ptpython.repl import embed
@@ -21,19 +19,17 @@ loop = asyncio.get_event_loop()
 counter = [0]
 
 
-@asyncio.coroutine
-def print_counter():
+async def print_counter():
     """
     Coroutine that prints counters and saves it in a global variable.
     """
     while True:
         print("Counter: %i" % counter[0])
         counter[0] += 1
-        yield from asyncio.sleep(3)
+        await asyncio.sleep(3)
 
 
-@asyncio.coroutine
-def interactive_shell():
+async def interactive_shell():
     """
     Coroutine that starts a Python REPL from which we can access the global
     counter variable.
@@ -42,7 +38,7 @@ def interactive_shell():
         'You should be able to read and update the "counter[0]" variable from this shell.'
     )
     try:
-        yield from embed(
+        await embed(
             globals=globals(), return_asyncio_coroutine=True, patch_stdout=True
         )
     except EOFError:

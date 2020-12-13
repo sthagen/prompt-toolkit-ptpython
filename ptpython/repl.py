@@ -19,10 +19,17 @@ from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import (
     FormattedText,
     PygmentsTokens,
+    StyleAndTextTuples,
     fragment_list_width,
     merge_formatted_text,
     to_formatted_text,
 )
+from prompt_toolkit.formatted_text.utils import (
+    fragment_list_to_text,
+    fragment_list_width,
+    split_lines,
+)
+from prompt_toolkit.key_binding.vi_state import InputMode
 from prompt_toolkit.patch_stdout import patch_stdout as patch_stdout_context
 from prompt_toolkit.shortcuts import clear_title, print_formatted_text, set_title
 from prompt_toolkit.utils import DummyContext
@@ -55,33 +62,45 @@ class PythonRepl(PythonInput):
                     output.write("WARNING | File not found: {}\n\n".format(path))
 
     def run(self) -> None:
+        # In order to make sure that asyncio code written in the
+        # interactive shell doesn't interfere with the prompt, we run the
+        # prompt in a different event loop.
+        # If we don't do this, people could spawn coroutine with a
+        # while/true inside which will freeze the prompt.
+
+        try:
+            old_loop: Optional[asyncio.AbstractEventLoop] = asyncio.get_event_loop()
+        except RuntimeError:
+            # This happens when the user used `asyncio.run()`.
+            old_loop = None
+
+        asyncio.set_event_loop(self.pt_loop)
+        try:
+            return self.pt_loop.run_until_complete(self.run_async())
+        finally:
+            # Restore the original event loop.
+            asyncio.set_event_loop(old_loop)
+
+    async def run_async(self) -> None:
         if self.terminal_title:
             set_title(self.terminal_title)
 
-        def prompt() -> str:
-            # In order to make sure that asyncio code written in the
-            # interactive shell doesn't interfere with the prompt, we run the
-            # prompt in a different event loop.
-            # If we don't do this, people could spawn coroutine with a
-            # while/true inside which will freeze the prompt.
-
-            try:
-                old_loop: Optional[asyncio.AbstractEventLoop] = asyncio.get_event_loop()
-            except RuntimeError:
-                # This happens when the user used `asyncio.run()`.
-                old_loop = None
-
-            asyncio.set_event_loop(self.pt_loop)
-            try:
-                return self.app.run()  # inputhook=inputhook)
-            finally:
-                # Restore the original event loop.
-                asyncio.set_event_loop(old_loop)
-
         while True:
+            # Capture the current input_mode in order to restore it after reset,
+            # for ViState.reset() sets it to InputMode.INSERT unconditionally and
+            # doesn't accept any arguments.
+            def pre_run(
+                last_input_mode: InputMode = self.app.vi_state.input_mode,
+            ) -> None:
+                if self.vi_keep_last_used_mode:
+                    self.app.vi_state.input_mode = last_input_mode
+
+                if not self.vi_keep_last_used_mode and self.vi_start_in_navigation_mode:
+                    self.app.vi_state.input_mode = InputMode.NAVIGATION
+
             # Run the UI.
             try:
-                text = prompt()
+                text = await self.app.run_async(pre_run=pre_run)
             except EOFError:
                 return
             except KeyboardInterrupt:
@@ -93,14 +112,12 @@ class PythonRepl(PythonInput):
         if self.terminal_title:
             clear_title()
 
-    async def run_async(self) -> None:
-        while True:
-            text = await self.app.run_async()
-            self._process_text(text)
-
     def _process_text(self, line: str) -> None:
 
         if line and not line.isspace():
+            if self.insert_blank_line_after_input:
+                self.app.output.write("\n")
+
             try:
                 # Eval and print.
                 self._execute(line)
@@ -119,8 +136,6 @@ class PythonRepl(PythonInput):
         """
         Evaluate the line and print the result.
         """
-        output = self.app.output
-
         # WORKAROUND: Due to a bug in Jedi, the current directory is removed
         # from sys.path. See: https://github.com/davidhalter/jedi/issues/1148
         if "" not in sys.path:
@@ -135,6 +150,11 @@ class PythonRepl(PythonInput):
                 flags=self.get_compiler_flags(),
                 dont_inherit=True,
             )
+
+        # If the input is single line, remove leading whitespace.
+        # (This doesn't have to be a syntax error.)
+        if len(line.splitlines()) == 1:
+            line = line.strip()
 
         if line.lstrip().startswith("\x1a"):
             # When the input starts with Ctrl-Z, quit the REPL.
@@ -153,50 +173,70 @@ class PythonRepl(PythonInput):
                 locals["_"] = locals["_%i" % self.current_statement_index] = result
 
                 if result is not None:
-                    out_prompt = to_formatted_text(self.get_output_prompt())
-
-                    try:
-                        result_str = "%r\n" % (result,)
-                    except UnicodeDecodeError:
-                        # In Python 2: `__repr__` should return a bytestring,
-                        # so to put it in a unicode context could raise an
-                        # exception that the 'ascii' codec can't decode certain
-                        # characters. Decode as utf-8 in that case.
-                        result_str = "%s\n" % repr(result).decode(  # type: ignore
-                            "utf-8"
-                        )
-
-                    # Align every line to the first one.
-                    line_sep = "\n" + " " * fragment_list_width(out_prompt)
-                    result_str = line_sep.join(result_str.splitlines()) + "\n"
-
-                    # Write output tokens.
-                    if self.enable_syntax_highlighting:
-                        formatted_output = merge_formatted_text(
-                            [
-                                out_prompt,
-                                PygmentsTokens(list(_lex_python_result(result_str))),
-                            ]
-                        )
-                    else:
-                        formatted_output = FormattedText(
-                            out_prompt + [("", result_str)]
-                        )
-
-                    print_formatted_text(
-                        formatted_output,
-                        style=self._current_style,
-                        style_transformation=self.style_transformation,
-                        include_default_pygments_style=False,
-                        output=output,
-                    )
-
+                    self.show_result(result)
             # If not a valid `eval` expression, run using `exec` instead.
             except SyntaxError:
                 code = compile_with_flags(line, "exec")
                 exec(code, self.get_globals(), self.get_locals())
 
-            output.flush()
+    def show_result(self, result: object) -> None:
+        """
+        Show __repr__ for an `eval` result.
+        """
+        out_prompt = to_formatted_text(self.get_output_prompt())
+
+        # If the repr is valid Python code, use the Pygments lexer.
+        result_repr = repr(result)
+        try:
+            compile(result_repr, "", "eval")
+        except SyntaxError:
+            formatted_result_repr = to_formatted_text(result_repr)
+        else:
+            formatted_result_repr = to_formatted_text(
+                PygmentsTokens(list(_lex_python_result(result_repr)))
+            )
+
+        # If __pt_repr__ is present, take this. This can return
+        # prompt_toolkit formatted text.
+        if hasattr(result, "__pt_repr__"):
+            try:
+                formatted_result_repr = to_formatted_text(
+                    getattr(result, "__pt_repr__")()
+                )
+                if isinstance(formatted_result_repr, list):
+                    formatted_result_repr = FormattedText(formatted_result_repr)
+            except:
+                pass
+
+        # Align every line to the prompt.
+        line_sep = "\n" + " " * fragment_list_width(out_prompt)
+        indented_repr: StyleAndTextTuples = []
+
+        lines = list(split_lines(formatted_result_repr))
+
+        for i, fragment in enumerate(lines):
+            indented_repr.extend(fragment)
+
+            # Add indentation separator between lines, not after the last line.
+            if i != len(lines) - 1:
+                indented_repr.append(("", line_sep))
+
+        # Write output tokens.
+        if self.enable_syntax_highlighting:
+            formatted_output = merge_formatted_text([out_prompt, indented_repr])
+        else:
+            formatted_output = FormattedText(
+                out_prompt + [("", fragment_list_to_text(formatted_result_repr))]
+            )
+
+        print_formatted_text(
+            formatted_output,
+            style=self._current_style,
+            style_transformation=self.style_transformation,
+            include_default_pygments_style=False,
+            output=self.app.output,
+        )
+        self.app.output.flush()
 
     def _handle_exception(self, e: Exception) -> None:
         output = self.app.output
@@ -311,7 +351,7 @@ def run_config(repl: PythonInput, config_file: str = "~/.ptpython/config.py") ->
 def embed(
     globals=None,
     locals=None,
-    configure: Optional[Callable] = None,
+    configure: Optional[Callable[[PythonRepl], None]] = None,
     vi_mode: bool = False,
     history_filename: Optional[str] = None,
     title: Optional[str] = None,
@@ -364,7 +404,9 @@ def embed(
         configure(repl)
 
     # Start repl.
-    patch_context: ContextManager = patch_stdout_context() if patch_stdout else DummyContext()
+    patch_context: ContextManager = (
+        patch_stdout_context() if patch_stdout else DummyContext()
+    )
 
     if return_asyncio_coroutine:
 

@@ -1,25 +1,37 @@
 #!/usr/bin/env python
 """
 ptpython: Interactive Python shell.
-Usage:
-    ptpython [ --vi ]
-             [ --config-dir=<directory> ] [ --interactive=<filename> ]
-             [--] [ <arg>... ]
-    ptpython -h | --help
 
-Options:
-    --vi                         : Use Vi keybindings instead of Emacs bindings.
-    --config-dir=<directory>     : Pass config directory. By default '$XDG_CONFIG_HOME/ptpython'.
-    -i, --interactive=<filename> : Start interactive shell after executing this file.
+positional arguments:
+  args                  Script and arguments
 
-Other environment variables:
-PYTHONSTARTUP: file executed on interactive startup (no default)
+optional arguments:
+  -h, --help            show this help message and exit
+  --vi                  Enable Vi key bindings
+  -i, --interactive     Start interactive shell after executing this file.
+  --light-bg            Run on a light background (use dark colors for text).
+  --dark-bg             Run on a dark background (use light colors for text).
+  --config-file CONFIG_FILE
+                        Location of configuration file.
+  --history-file HISTORY_FILE
+                        Location of history file.
+  -V, --version         show program's version number and exit
+
+environment variables:
+  PTPYTHON_CONFIG_HOME: a configuration directory to use
+  PYTHONSTARTUP: file executed on interactive startup (no default)
 """
 import argparse
 import os
 import pathlib
 import sys
+from textwrap import dedent
 from typing import Tuple
+
+try:
+    from importlib import metadata
+except ImportError:
+    import importlib_metadata as metadata  # type: ignore
 
 import appdirs
 from prompt_toolkit.formatted_text import HTML
@@ -33,8 +45,15 @@ __all__ = ["create_parser", "get_config_and_history_file", "run"]
 class _Parser(argparse.ArgumentParser):
     def print_help(self):
         super().print_help()
-        print("Other environment variables:")
-        print("PYTHONSTARTUP: file executed on interactive startup (no default)")
+        print(
+            dedent(
+                """
+                environment variables:
+                  PTPYTHON_CONFIG_HOME: a configuration directory to use
+                  PYTHONSTARTUP: file executed on interactive startup (no default)
+                """,
+            ).rstrip(),
+        )
 
 
 def create_parser() -> _Parser:
@@ -47,11 +66,24 @@ def create_parser() -> _Parser:
         help="Start interactive shell after executing this file.",
     )
     parser.add_argument(
+        "--light-bg",
+        action="store_true",
+        help="Run on a light background (use dark colors for text).",
+    ),
+    parser.add_argument(
+        "--dark-bg",
+        action="store_true",
+        help="Run on a dark background (use light colors for text).",
+    ),
+    parser.add_argument(
         "--config-file", type=str, help="Location of configuration file."
     )
     parser.add_argument("--history-file", type=str, help="Location of history file.")
     parser.add_argument(
-        "-V", "--version", action="store_true", help="Print version and exit."
+        "-V",
+        "--version",
+        action="version",
+        version=metadata.version("ptpython"),  # type: ignore
     )
     parser.add_argument("args", nargs="*", help="Script and arguments")
     return parser
@@ -62,7 +94,9 @@ def get_config_and_history_file(namespace: argparse.Namespace) -> Tuple[str, str
     Check which config/history files to use, ensure that the directories for
     these files exist, and return the config and history path.
     """
-    config_dir = appdirs.user_config_dir("ptpython", "prompt_toolkit")
+    config_dir = os.environ.get(
+        "PTPYTHON_CONFIG_HOME", appdirs.user_config_dir("ptpython", "prompt_toolkit"),
+    )
     data_dir = appdirs.user_data_dir("ptpython", "prompt_toolkit")
 
     # Create directories.
@@ -154,6 +188,14 @@ def run() -> None:
         def configure(repl) -> None:
             if os.path.exists(config_file):
                 run_config(repl, config_file)
+
+            # Adjust colors if dark/light background flag has been given.
+            if a.light_bg:
+                repl.min_brightness = 0.0
+                repl.max_brightness = 0.60
+            elif a.dark_bg:
+                repl.min_brightness = 0.60
+                repl.max_brightness = 1.0
 
         import __main__
 

@@ -1,6 +1,62 @@
 CHANGELOG
 =========
 
+3.0.7: 2020-09-25
+-----------------
+
+New features:
+- Option to show/hide private attributes during a completion
+- Added `insert_blank_line_after_input` option similar to
+  `insert_blank_line_after_output`.
+
+Fixes:
+- Fixed some formatting issues of `__pt_repr__`.
+- Abbreviate completion meta information for dictionary completer if needed.
+
+
+3.0.6: 2020-09-23
+-----------------
+
+New features:
+- (Experimental) support for `__pt_repr__` methods. If objects implement this
+  method, this will be used to print the result in the REPL instead of the
+  normal `__repr__`.
+- Added py.typed file, to enable type checking for applications that are
+  embedding ptpython.
+
+
+3.0.5: 2020-08-10
+-----------------
+
+Fixes:
+- Handle bug in dictionary completion when numeric keys are used.
+
+
+3.0.4: 2020-08-10
+-----------------
+
+New features:
+- Allow leading whitespace before single line expressions.
+- Show full syntax error in validator.
+- Added `vi_start_in_navigation_mode` and `vi_keep_last_used_mode` options.
+
+Fixes:
+- Improved dictionary completion: handle keys that contain spaces and don't
+  recognize numbers as variable names.
+- Fix in exit confirmation.
+
+
+3.0.3: 2020-07-10
+-----------------
+
+Fixes:
+- Sort attribute names for `DictionaryCompleter` and move underscored
+  attributes to the end.
+- Handle unhandled exceptions in `get_compiler_flags`.
+- Improved `run_async` code.
+- Fix --version parameter.
+
+
 3.0.2: 2020-04-14
 -----------------
 
