@@ -1,6 +1,170 @@
 CHANGELOG
 =========
 
+3.0.20: 2021-09-14
+------------------
+
+New features:
+- For `DictionaryCompleter`: show parentheses after methods.
+
+Fixes:
+- Don't crash when trying to complete broken mappings in `DictionaryCompleter`.
+- Don't crash when an older version of `black` is installed that is not
+  compatible.
+
+
+3.0.19: 2021-07-08
+------------------
+
+Fixes:
+- Fix handling of `SystemExit` (fixes "ValueError: I/O operation on closed
+  file").
+- Allow usage of `await` in assignment expressions or for-loops.
+
+
+3.0.18: 2021-06-26
+------------------
+
+Fixes:
+- Made "black" an optional dependency.
+
+
+3.0.17: 2021-03-22
+------------------
+
+Fixes:
+- Fix leaking file descriptors due to not closing the asyncio event loop after
+  reading input in a thread.
+- Fix race condition during retrieval of signatures.
+
+
+3.0.16: 2021-02-11
+------------------
+
+(Commit 7f619e was missing in previous release.)
+
+Fixes:
+- Several fixes to the completion code:
+  * Give dictionary completions priority over path completions.
+  * Always call non-fuzzy completer after fuzzy completer to prevent that some
+    completions were missed out if the fuzzy completer doesn't find them.
+
+
+3.0.15: 2021-02-11
+------------------
+
+New features:
+- When pressing control-w, only delete characters until a punctuation.
+
+Fixes:
+- Fix `AttributeError` during retrieval of signatures with type annotations.
+
+
+3.0.14: 2021-02-10
+------------------
+
+New features:
+- Display of signature and completion drop down together.
+- If `DictionaryCompleter` is enabled, also retrieve signatures when Jedi
+  fails, using the same logic.
+- List function parameters first and private attributes at the end in the
+  completion menu.
+- Cleanup of the completion code.
+
+Fixes:
+- Handle exceptions raised when `repr()` is called.
+- Fix leakage of `exc_info` from eval to exec call.
+- Fix handling of `KeyboardInterrupt` in REPL during evaluation of `__repr__`.
+- Fix style for signature toolbar.
+- Hide signature when sidebar is visible.
+
+
+3.0.13: 2021-01-26
+------------------
+
+New features:
+- Added 'print all' option to pager.
+- Improve handling of indented code:
+  * Allow multiline input to be indented as a whole (we will unindent before
+    executing).
+  * Correctly visualize tabs (instead of ^I, which happens when pasted in
+    bracketed paste).
+
+Fixes:
+- Fix line ending bug in pager.
+
+
+3.0.12: 2021-01-24
+------------------
+
+New features:
+- Expose a `get_ptpython` function in the global namespace, to get programmatic
+  access to the REPL.
+- Expose `embed()` at the top level of the package. Make it possible to do
+  `from ptpython import embed`.
+
+Fixes:
+- Properly handle exceptions when trying to access `__pt_repr__`.
+- Properly handle `SystemExit`.
+
+
+3.0.11: 2021-01-20
+------------------
+
+New features:
+- Add support for top-level await.
+- Refactoring of event loop usage:
+
+  * The ptpython input UI will now run in a separate thread. This makes it
+    possible to properly embed ptpython in an asyncio application, without
+    having to deal with nested event loops (which asyncio does not support).
+
+  * The "eval" part doesn't anymore take place within a ptpython coroutine, so
+    it can spawn its own loop if needed. This also fixes `asyncio.run()` usage
+    in the REPL, which was broken before.
+
+- Added syntax highlighting and autocompletion for !-style system commands.
+
+Fixes:
+- Remove unexpected additional line after output.
+- Fix system prompt. Accept !-style inputs again.
+- Don't execute PYTHONSTARTUP when -i flag was given.
+
+
+3.0.10: 2021-01-13
+------------------
+
+Fixes:
+- Do dictionary completion on Sequence and Mapping objects (from
+  collections.abc). Note that dictionary completion is still turned off by
+  default.
+
+
+3.0.9: 2021-01-10
+-----------------
+
+New features:
+- Allow replacing `PythonInput.completer` at runtime (useful for tools build on
+  top of ptpython).
+- Show REPL title in pager.
+
+
+3.0.8: 2021-01-05
+-----------------
+
+New features:
+- Optional output formatting using Black.
+- Optional pager for displaying outputs that don't fit on the screen.
+- Added --light-bg and --dark-bg flags to automatically optimize the brightness
+  of the colors according to the terminal background.
+- Addd `PTPYTHON_CONFIG_HOME` for explicitely setting the config directory.
+- Show completion suffixes (like '(' for functions).
+
+Fixes:
+- Fix dictionary completion on Pandas objects.
+- Stop using deprecated Jedi functions.
+
+
 3.0.7: 2020-09-25
 -----------------
 

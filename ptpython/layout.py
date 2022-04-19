@@ -4,13 +4,13 @@ Creation of the `Layout` instance for the Python input/REPL.
 import platform
 import sys
 from enum import Enum
+from inspect import _ParameterKind as ParameterKind
 from typing import TYPE_CHECKING, Optional
 
 from prompt_toolkit.application import get_app
 from prompt_toolkit.enums import DEFAULT_BUFFER, SEARCH_BUFFER
 from prompt_toolkit.filters import (
     Condition,
-    has_completions,
     has_focus,
     is_done,
     renderer_height_is_known,
@@ -40,6 +40,7 @@ from prompt_toolkit.layout.processors import (
     HighlightIncrementalSearchProcessor,
     HighlightMatchingBracketProcessor,
     HighlightSelectionProcessor,
+    TabsProcessor,
 )
 from prompt_toolkit.lexers import SimpleLexer
 from prompt_toolkit.mouse_events import MouseEvent
@@ -63,7 +64,7 @@ __all__ = ["PtPythonLayout", "CompletionVisualisation"]
 
 
 class CompletionVisualisation(Enum):
-    " Visualisation method for the completions. "
+    "Visualisation method for the completions."
     NONE = "none"
     POP_UP = "pop-up"
     MULTI_COLUMN = "multi-column"
@@ -115,7 +116,7 @@ def python_sidebar(python_input: "PythonInput") -> Window:
 
             @if_mousedown
             def goto_next(mouse_event: MouseEvent) -> None:
-                " Select item and go to next value. "
+                "Select item and go to next value."
                 python_input.selected_option_index = index
                 option = python_input.selected_option
                 option.activate_next()
@@ -229,8 +230,8 @@ def signature_toolbar(python_input):
     Return the `Layout` for the signature.
     """
 
-    def get_text_fragments():
-        result = []
+    def get_text_fragments() -> StyleAndTextTuples:
+        result: StyleAndTextTuples = []
         append = result.append
         Signature = "class:signature-toolbar"
 
@@ -239,7 +240,7 @@ def signature_toolbar(python_input):
 
             append((Signature, " "))
             try:
-                append((Signature, sig.full_name))
+                append((Signature, sig.name))
             except IndexError:
                 # Workaround for #37: https://github.com/jonathanslenders/python-prompt-toolkit/issues/37
                 # See also: https://github.com/davidhalter/jedi/issues/490
@@ -247,30 +248,40 @@ def signature_toolbar(python_input):
 
             append((Signature + ",operator", "("))
 
-            try:
-                enumerated_params = enumerate(sig.params)
-            except AttributeError:
-                # Workaround for #136: https://github.com/jonathanslenders/ptpython/issues/136
-                # AttributeError: 'Lambda' object has no attribute 'get_subscope_by_name'
-                return []
+            got_positional_only = False
+            got_keyword_only = False
 
-            for i, p in enumerated_params:
-                # Workaround for #47: 'p' is None when we hit the '*' in the signature.
-                #                     and sig has no 'index' attribute.
-                # See: https://github.com/jonathanslenders/ptpython/issues/47
-                #      https://github.com/davidhalter/jedi/issues/598
-                description = p.description if p else "*"  # or '*'
+            for i, p in enumerate(sig.parameters):
+                # Detect transition between positional-only and not positional-only.
+                if p.kind == ParameterKind.POSITIONAL_ONLY:
+                    got_positional_only = True
+                if got_positional_only and p.kind != ParameterKind.POSITIONAL_ONLY:
+                    got_positional_only = False
+                    append((Signature, "/"))
+                    append((Signature + ",operator", ", "))
+
+                if not got_keyword_only and p.kind == ParameterKind.KEYWORD_ONLY:
+                    got_keyword_only = True
+                    append((Signature, "*"))
+                    append((Signature + ",operator", ", "))
+
                 sig_index = getattr(sig, "index", 0)
 
                 if i == sig_index:
                     # Note: we use `_Param.description` instead of
                     #       `_Param.name`, that way we also get the '*' before args.
-                    append((Signature + ",current-name", str(description)))
+                    append((Signature + ",current-name", p.description))
                 else:
-                    append((Signature, str(description)))
+                    append((Signature, p.description))
+
+                if p.default:
+                    # NOTE: For the jedi-based completion, the default is
+                    #       currently still part of the name.
+                    append((Signature, f"={p.default}"))
+
                 append((Signature + ",operator", ", "))
 
-            if sig.params:
+            if sig.parameters:
                 # Pop last comma
                 result.pop()
 
@@ -285,16 +296,10 @@ def signature_toolbar(python_input):
         filter=
         # Show only when there is a signature
         HasSignature(python_input) &
-        # And there are no completions to be shown. (would cover signature pop-up.)
-        ~(
-            has_completions
-            & (
-                show_completions_menu(python_input)
-                | show_multi_column_completions_menu(python_input)
-            )
-        )
         # Signature needs to be shown.
-        & ShowSignature(python_input) &
+        ShowSignature(python_input) &
+        # And no sidebar is visible.
+        ~ShowSidebar(python_input) &
         # Not done yet.
         ~is_done,
     )
@@ -371,9 +376,9 @@ def status_bar(python_input: "PythonInput") -> Container:
         else:
             result.extend(
                 [
-                    (TB + " class:key", "[F3]", enter_history),
+                    (TB + " class:status-toolbar.key", "[F3]", enter_history),
                     (TB, " History ", enter_history),
-                    (TB + " class:key", "[F6]", toggle_paste_mode),
+                    (TB + " class:status-toolbar.key", "[F6]", toggle_paste_mode),
                     (TB, " ", toggle_paste_mode),
                 ]
             )
@@ -467,7 +472,7 @@ def show_sidebar_button_info(python_input: "PythonInput") -> Container:
 
     @if_mousedown
     def toggle_sidebar(mouse_event: MouseEvent) -> None:
-        " Click handler for the menu. "
+        "Click handler for the menu."
         python_input.show_sidebar = not python_input.show_sidebar
 
     version = sys.version_info
@@ -539,7 +544,7 @@ def meta_enter_message(python_input: "PythonInput") -> Container:
 
     @Condition
     def extra_condition() -> bool:
-        " Only show when... "
+        "Only show when..."
         b = python_input.default_buffer
 
         return (
@@ -584,7 +589,7 @@ class PtPythonLayout:
                 """
                 b = python_input.default_buffer
 
-                if b.complete_state is None and python_input.signatures:
+                if python_input.signatures:
                     row, col = python_input.signatures[0].bracket_start
                     index = b.document.translate_row_col_to_index(row - 1, col)
                     return index
@@ -603,6 +608,7 @@ class PtPythonLayout:
                         ),
                         HighlightSelectionProcessor(),
                         DisplayMultipleCursors(),
+                        TabsProcessor(),
                         # Show matching parentheses, but only while editing.
                         ConditionalProcessor(
                             processor=HighlightMatchingBracketProcessor(chars="[](){}"),
@@ -640,7 +646,7 @@ class PtPythonLayout:
         sidebar = python_sidebar(python_input)
         self.exit_confirmation = create_exit_confirmation(python_input)
 
-        root_container = HSplit(
+        self.root_container = HSplit(
             [
                 VSplit(
                     [
@@ -654,32 +660,28 @@ class PtPythonLayout:
                                         Float(
                                             xcursor=True,
                                             ycursor=True,
-                                            content=ConditionalContainer(
-                                                content=CompletionsMenu(
-                                                    scroll_offset=(
-                                                        lambda: python_input.completion_menu_scroll_offset
+                                            content=HSplit(
+                                                [
+                                                    signature_toolbar(python_input),
+                                                    ConditionalContainer(
+                                                        content=CompletionsMenu(
+                                                            scroll_offset=(
+                                                                lambda: python_input.completion_menu_scroll_offset
+                                                            ),
+                                                            max_height=12,
+                                                        ),
+                                                        filter=show_completions_menu(
+                                                            python_input
+                                                        ),
                                                     ),
-                                                    max_height=12,
-                                                ),
-                                                filter=show_completions_menu(
-                                                    python_input
-                                                ),
+                                                    ConditionalContainer(
+                                                        content=MultiColumnCompletionsMenu(),
+                                                        filter=show_multi_column_completions_menu(
+                                                            python_input
+                                                        ),
+                                                    ),
+                                                ]
                                             ),
-                                        ),
-                                        Float(
-                                            xcursor=True,
-                                            ycursor=True,
-                                            content=ConditionalContainer(
-                                                content=MultiColumnCompletionsMenu(),
-                                                filter=show_multi_column_completions_menu(
-                                                    python_input
-                                                ),
-                                            ),
-                                        ),
-                                        Float(
-                                            xcursor=True,
-                                            ycursor=True,
-                                            content=signature_toolbar(python_input),
                                         ),
                                         Float(
                                             left=2,
@@ -757,5 +759,5 @@ class PtPythonLayout:
             ]
         )
 
-        self.layout = Layout(root_container)
+        self.layout = Layout(self.root_container)
         self.sidebar = sidebar

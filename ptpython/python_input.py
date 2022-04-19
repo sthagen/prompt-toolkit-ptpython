@@ -15,7 +15,14 @@ from prompt_toolkit.auto_suggest import (
     ThreadedAutoSuggest,
 )
 from prompt_toolkit.buffer import Buffer
-from prompt_toolkit.completion import Completer, FuzzyCompleter, ThreadedCompleter
+from prompt_toolkit.completion import (
+    Completer,
+    ConditionalCompleter,
+    DynamicCompleter,
+    FuzzyCompleter,
+    ThreadedCompleter,
+    merge_completers,
+)
 from prompt_toolkit.document import Document
 from prompt_toolkit.enums import DEFAULT_BUFFER, EditingMode
 from prompt_toolkit.filters import Condition
@@ -37,7 +44,7 @@ from prompt_toolkit.key_binding.bindings.open_in_editor import (
     load_open_in_editor_bindings,
 )
 from prompt_toolkit.key_binding.vi_state import InputMode
-from prompt_toolkit.lexers import DynamicLexer, Lexer, PygmentsLexer, SimpleLexer
+from prompt_toolkit.lexers import DynamicLexer, Lexer, SimpleLexer
 from prompt_toolkit.output import ColorDepth, Output
 from prompt_toolkit.styles import (
     AdjustBrightnessStyleTransformation,
@@ -49,7 +56,6 @@ from prompt_toolkit.styles import (
 )
 from prompt_toolkit.utils import is_windows
 from prompt_toolkit.validation import ConditionalValidator, Validator
-from pygments.lexers import Python3Lexer as PythonLexer
 
 from .completer import CompletePrivateAttributes, HidePrivateCompleter, PythonCompleter
 from .history_browser import PythonHistory
@@ -59,9 +65,11 @@ from .key_bindings import (
     load_sidebar_bindings,
 )
 from .layout import CompletionVisualisation, PtPythonLayout
+from .lexer import PtpythonLexer
 from .prompt_style import ClassicPrompt, IPythonPrompt, PromptStyle
+from .signatures import Signature, get_signatures_using_eval, get_signatures_using_jedi
 from .style import generate_style, get_all_code_styles, get_all_ui_styles
-from .utils import get_jedi_script_from_document
+from .utils import unindent_code
 from .validator import PythonValidator
 
 __all__ = ["PythonInput"]
@@ -165,6 +173,11 @@ class PythonInput:
 
         python_input = PythonInput(...)
         python_code = python_input.app.run()
+
+    :param create_app: When `False`, don't create and manage a prompt_toolkit
+                       application. The default is `True` and should only be set
+                       to false if PythonInput is being embedded in a separate
+                       prompt_toolkit application.
     """
 
     def __init__(
@@ -179,6 +192,7 @@ class PythonInput:
         output: Optional[Output] = None,
         # For internal use.
         extra_key_bindings: Optional[KeyBindings] = None,
+        create_app=True,
         _completer: Optional[Completer] = None,
         _validator: Optional[Validator] = None,
         _lexer: Optional[Lexer] = None,
@@ -191,20 +205,32 @@ class PythonInput:
         self.get_globals: _GetNamespace = get_globals or (lambda: {})
         self.get_locals: _GetNamespace = get_locals or self.get_globals
 
+        self.completer = _completer or PythonCompleter(
+            self.get_globals,
+            self.get_locals,
+            lambda: self.enable_dictionary_completion,
+        )
+
         self._completer = HidePrivateCompleter(
-            _completer
-            or FuzzyCompleter(
-                PythonCompleter(
-                    self.get_globals,
-                    self.get_locals,
-                    lambda: self.enable_dictionary_completion,
-                ),
-                enable_fuzzy=Condition(lambda: self.enable_fuzzy_completion),
+            # If fuzzy is enabled, first do fuzzy completion, but always add
+            # the non-fuzzy completions, if somehow the fuzzy completer didn't
+            # find them. (Due to the way the cursor position is moved in the
+            # fuzzy completer, some completions will not always be found by the
+            # fuzzy completer, but will be found with the normal completer.)
+            merge_completers(
+                [
+                    ConditionalCompleter(
+                        FuzzyCompleter(DynamicCompleter(lambda: self.completer)),
+                        Condition(lambda: self.enable_fuzzy_completion),
+                    ),
+                    DynamicCompleter(lambda: self.completer),
+                ],
+                deduplicate=True,
             ),
             lambda: self.complete_private_attributes,
         )
         self._validator = _validator or PythonValidator(self.get_compiler_flags)
-        self._lexer = _lexer or PygmentsLexer(PythonLexer)
+        self._lexer = PtpythonLexer(_lexer)
 
         self.history: History
         if history_filename:
@@ -253,13 +279,17 @@ class PythonInput:
 
         self.enable_syntax_highlighting: bool = True
         self.enable_fuzzy_completion: bool = False
-        self.enable_dictionary_completion: bool = False
+        self.enable_dictionary_completion: bool = False  # Also eval-based completion.
         self.complete_private_attributes: CompletePrivateAttributes = (
             CompletePrivateAttributes.ALWAYS
         )
         self.swap_light_and_dark: bool = False
         self.highlight_matching_parenthesis: bool = False
         self.show_sidebar: bool = False  # Currently show the sidebar.
+
+        # Pager.
+        self.enable_output_formatting: bool = False
+        self.enable_pager: bool = False
 
         # When the sidebar is visible, also show the help text.
         self.show_sidebar_help: bool = True
@@ -319,7 +349,7 @@ class PythonInput:
         self.current_statement_index: int = 1
 
         # Code signatures. (This is set asynchronously after a timeout.)
-        self.signatures: List[Any] = []
+        self.signatures: List[Signature] = []
 
         # Boolean indicating whether we have a signatures thread running.
         # (Never run more than one at the same time.)
@@ -355,10 +385,16 @@ class PythonInput:
             extra_toolbars=self._extra_toolbars,
         )
 
-        self.app = self._create_application(input, output)
-
-        if vi_mode:
-            self.app.editing_mode = EditingMode.VI
+        # Create an app if requested. If not, the global get_app() is returned
+        # for self.app via property getter.
+        if create_app:
+            self._app: Optional[Application] = self._create_application(input, output)
+            # Setting vi_mode will not work unless the prompt_toolkit
+            # application has been created.
+            if vi_mode:
+                self.app.editing_mode = EditingMode.VI
+        else:
+            self._app = None
 
     def _accept_handler(self, buff: Buffer) -> bool:
         app = get_app()
@@ -368,12 +404,12 @@ class PythonInput:
 
     @property
     def option_count(self) -> int:
-        " Return the total amount of options. (In all categories together.) "
+        "Return the total amount of options. (In all categories together.)"
         return sum(len(category.options) for category in self.options)
 
     @property
     def selected_option(self) -> Option:
-        " Return the currently selected option. "
+        "Return the currently selected option."
         i = 0
         for category in self.options:
             for o in category.options:
@@ -496,7 +532,7 @@ class PythonInput:
         def simple_option(
             title: str, description: str, field_name: str, values: Optional[List] = None
         ) -> Option:
-            " Create Simple on/of option. "
+            "Create Simple on/of option."
             values = values or ["off", "on"]
 
             def get_current_value():
@@ -735,6 +771,17 @@ class PythonInput:
                         description="Highlight matching parenthesis, when the cursor is on or right after one.",
                         field_name="highlight_matching_parenthesis",
                     ),
+                    simple_option(
+                        title="Reformat output (black)",
+                        description="Reformat outputs using Black, if possible (experimental).",
+                        field_name="enable_output_formatting",
+                    ),
+                    simple_option(
+                        title="Enable pager for output",
+                        description="Use a pager for displaying outputs that don't "
+                        "fit on the screen.",
+                        field_name="enable_pager",
+                    ),
                 ],
             ),
             OptionCategory(
@@ -878,77 +925,71 @@ class PythonInput:
         else:
             self.editing_mode = EditingMode.EMACS
 
-    def _on_input_timeout(self, buff: Buffer, loop=None) -> None:
+    @property
+    def app(self) -> Application:
+        if self._app is None:
+            return get_app()
+        return self._app
+
+    def _on_input_timeout(self, buff: Buffer) -> None:
         """
         When there is no input activity,
         in another thread, get the signature of the current code.
         """
-        app = self.app
 
-        # Never run multiple get-signature threads.
-        if self._get_signatures_thread_running:
-            return
-        self._get_signatures_thread_running = True
-
-        document = buff.document
-
-        loop = loop or get_event_loop()
-
-        def run():
-            script = get_jedi_script_from_document(
+        def get_signatures_in_executor(document: Document) -> List[Signature]:
+            # First, get signatures from Jedi. If we didn't found any and if
+            # "dictionary completion" (eval-based completion) is enabled, then
+            # get signatures using eval.
+            signatures = get_signatures_using_jedi(
                 document, self.get_locals(), self.get_globals()
             )
+            if not signatures and self.enable_dictionary_completion:
+                signatures = get_signatures_using_eval(
+                    document, self.get_locals(), self.get_globals()
+                )
 
-            # Show signatures in help text.
-            if script:
-                try:
-                    signatures = script.get_signatures()
-                except ValueError:
-                    # e.g. in case of an invalid \\x escape.
-                    signatures = []
-                except Exception:
-                    # Sometimes we still get an exception (TypeError), because
-                    # of probably bugs in jedi. We can silence them.
-                    # See: https://github.com/davidhalter/jedi/issues/492
-                    signatures = []
-                else:
-                    # Try to access the params attribute just once. For Jedi
-                    # signatures containing the keyword-only argument star,
-                    # this will crash when retrieving it the first time with
-                    # AttributeError. Every following time it works.
-                    # See: https://github.com/jonathanslenders/ptpython/issues/47
-                    #      https://github.com/davidhalter/jedi/issues/598
-                    try:
-                        if signatures:
-                            signatures[0].params
-                    except AttributeError:
-                        pass
-            else:
-                signatures = []
+            return signatures
 
-            self._get_signatures_thread_running = False
+        app = self.app
 
-            # Set signatures and redraw if the text didn't change in the
-            # meantime. Otherwise request new signatures.
-            if buff.text == document.text:
-                self.signatures = signatures
+        async def on_timeout_task() -> None:
+            loop = get_event_loop()
 
-                # Set docstring in docstring buffer.
-                if signatures:
-                    string = signatures[0].docstring()
-                    if not isinstance(string, str):
-                        string = string.decode("utf-8")
-                    self.docstring_buffer.reset(
-                        document=Document(string, cursor_position=0)
+            # Never run multiple get-signature threads.
+            if self._get_signatures_thread_running:
+                return
+            self._get_signatures_thread_running = True
+
+            try:
+                while True:
+                    document = buff.document
+                    signatures = await loop.run_in_executor(
+                        None, get_signatures_in_executor, document
                     )
-                else:
-                    self.docstring_buffer.reset()
 
-                app.invalidate()
+                    # If the text didn't change in the meantime, take these
+                    # signatures. Otherwise, try again.
+                    if buff.text == document.text:
+                        break
+            finally:
+                self._get_signatures_thread_running = False
+
+            # Set signatures and redraw.
+            self.signatures = signatures
+
+            # Set docstring in docstring buffer.
+            if signatures:
+                self.docstring_buffer.reset(
+                    document=Document(signatures[0].docstring, cursor_position=0)
+                )
             else:
-                self._on_input_timeout(buff, loop=loop)
+                self.docstring_buffer.reset()
 
-        loop.run_in_executor(None, run)
+            app.invalidate()
+
+        if app.is_running:
+            app.create_background_task(on_timeout_task())
 
     def on_reset(self) -> None:
         self.signatures = []
@@ -957,7 +998,7 @@ class PythonInput:
         """
         Display the history.
         """
-        app = get_app()
+        app = self.app
         app.vi_state.input_mode = InputMode.NAVIGATION
 
         history = PythonHistory(self, self.default_buffer.document)
@@ -975,3 +1016,49 @@ class PythonInput:
                 app.vi_state.input_mode = InputMode.INSERT
 
         asyncio.ensure_future(do_in_terminal())
+
+    def read(self) -> str:
+        """
+        Read the input.
+
+        This will run the Python input user interface in another thread, wait
+        for input to be accepted and return that. By running the UI in another
+        thread, we avoid issues regarding possibly nested event loops.
+
+        This can raise EOFError, when Control-D is pressed.
+        """
+        # Capture the current input_mode in order to restore it after reset,
+        # for ViState.reset() sets it to InputMode.INSERT unconditionally and
+        # doesn't accept any arguments.
+        def pre_run(
+            last_input_mode: InputMode = self.app.vi_state.input_mode,
+        ) -> None:
+            if self.vi_keep_last_used_mode:
+                self.app.vi_state.input_mode = last_input_mode
+
+            if not self.vi_keep_last_used_mode and self.vi_start_in_navigation_mode:
+                self.app.vi_state.input_mode = InputMode.NAVIGATION
+
+        # Run the UI.
+        while True:
+            try:
+                result = self.app.run(pre_run=pre_run, in_thread=True)
+
+                if result.lstrip().startswith("\x1a"):
+                    # When the input starts with Ctrl-Z, quit the REPL.
+                    # (Important for Windows users.)
+                    raise EOFError
+
+                # Remove leading whitespace.
+                # (Users can add extra indentation, which happens for
+                # instance because of copy/pasting code.)
+                result = unindent_code(result)
+
+                if result and not result.isspace():
+                    if self.insert_blank_line_after_input:
+                        self.app.output.write("\n")
+
+                    return result
+            except KeyboardInterrupt:
+                # Abort - try again.
+                self.default_buffer.document = Document()

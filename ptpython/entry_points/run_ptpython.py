@@ -28,16 +28,17 @@ import sys
 from textwrap import dedent
 from typing import Tuple
 
-try:
-    from importlib import metadata
-except ImportError:
-    import importlib_metadata as metadata  # type: ignore
-
 import appdirs
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.shortcuts import print_formatted_text
 
 from ptpython.repl import embed, enable_deprecation_warnings, run_config
+
+try:
+    from importlib import metadata
+except ImportError:
+    import importlib_metadata as metadata  # type: ignore
+
 
 __all__ = ["create_parser", "get_config_and_history_file", "run"]
 
@@ -95,7 +96,8 @@ def get_config_and_history_file(namespace: argparse.Namespace) -> Tuple[str, str
     these files exist, and return the config and history path.
     """
     config_dir = os.environ.get(
-        "PTPYTHON_CONFIG_HOME", appdirs.user_config_dir("ptpython", "prompt_toolkit"),
+        "PTPYTHON_CONFIG_HOME",
+        appdirs.user_config_dir("ptpython", "prompt_toolkit"),
     )
     data_dir = appdirs.user_data_dir("ptpython", "prompt_toolkit")
 
@@ -163,7 +165,8 @@ def run() -> None:
 
     # --interactive
     if a.interactive and a.args:
-        startup_paths.append(a.args[0])
+        # Note that we shouldn't run PYTHONSTARTUP when -i is given.
+        startup_paths = [a.args[0]]
         sys.argv = a.args
 
     # Add the current directory to `sys.path`.
@@ -176,9 +179,11 @@ def run() -> None:
         path = a.args[0]
         with open(path, "rb") as f:
             code = compile(f.read(), path, "exec")
-            # NOTE: We have to pass an empty dictionary as namespace. Omitting
-            #       this argument causes imports to not be found. See issue #326.
-            exec(code, {})
+            # NOTE: We have to pass a dict as namespace. Omitting this argument
+            #       causes imports to not be found. See issue #326.
+            #       However, an empty dict sets __name__ to 'builtins', which
+            #       breaks `if __name__ == '__main__'` checks. See issue #444.
+            exec(code, {"__name__": "__main__", "__file__": path})
 
     # Run interactive shell.
     else:

@@ -12,7 +12,7 @@ ptpython
 .. image :: https://github.com/jonathanslenders/ptpython/raw/master/docs/images/example1.png
 
 Ptpython is an advanced Python REPL. It should work on all
-Python versions from 2.6 up to 3.7 and work cross platform (Linux,
+Python versions from 2.6 up to 3.9 and work cross platform (Linux,
 BSD, OS X and Windows).
 
 Note: this version of ptpython requires at least Python 3.6. Install ptpython
@@ -49,6 +49,40 @@ Features
 
 [2] If the terminal supports it (most terminals do), this allows pasting
 without going into paste mode. It will keep the indentation.
+
+Command Line Options
+********************
+
+The help menu shows basic command-line options.
+
+::
+
+    $ ptpython --help
+    usage: ptpython [-h] [--vi] [-i] [--light-bg] [--dark-bg] [--config-file CONFIG_FILE]
+                    [--history-file HISTORY_FILE] [-V]
+                    [args ...]
+
+    ptpython: Interactive Python shell.
+
+    positional arguments:
+      args                  Script and arguments
+
+    optional arguments:
+      -h, --help            show this help message and exit
+      --vi                  Enable Vi key bindings
+      -i, --interactive     Start interactive shell after executing this file.
+      --light-bg            Run on a light background (use dark colors for text).
+      --dark-bg             Run on a dark background (use light colors for text).
+      --config-file CONFIG_FILE
+                            Location of configuration file.
+      --history-file HISTORY_FILE
+                            Location of history file.
+      -V, --version         show program's version number and exit
+
+    environment variables:
+      PTPYTHON_CONFIG_HOME: a configuration directory to use
+      PYTHONSTARTUP: file executed on interactive startup (no default)
+
 
 __pt_repr__: A nicer repr with colors
 *************************************
@@ -109,6 +143,8 @@ like this:
    else:
        sys.exit(embed(globals(), locals()))
 
+Note config file support currently only works when invoking `ptpython` directly.
+That it, the config file will be ignored when embedding ptpython in an application.
 
 Multiline editing
 *****************
@@ -158,6 +194,9 @@ is looked for.
 
 Have a look at this example to see what is possible:
 `config.py <https://github.com/jonathanslenders/ptpython/blob/master/examples/ptpython_config/config.py>`_
+
+Note config file support currently only works when invoking `ptpython` directly.
+That it, the config file will be ignored when embedding ptpython in an application.
 
 
 IPython support
@@ -211,7 +250,7 @@ FAQ
 
 **Q**: The ``Meta``-key doesn't work.
 
-**A**: For some terminals you have to enable the Alt-key to act as meta key, but you 
+**A**: For some terminals you have to enable the Alt-key to act as meta key, but you
 can also type ``Escape`` before any key instead.
 
 
