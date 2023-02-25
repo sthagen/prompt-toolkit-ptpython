@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 from prompt_toolkit.application import get_app
@@ -47,7 +49,7 @@ def tab_should_insert_whitespace() -> bool:
     return bool(b.text and (not before_cursor or before_cursor.isspace()))
 
 
-def load_python_bindings(python_input: "PythonInput") -> KeyBindings:
+def load_python_bindings(python_input: PythonInput) -> KeyBindings:
     """
     Custom key bindings.
     """
@@ -157,7 +159,7 @@ def load_python_bindings(python_input: "PythonInput") -> KeyBindings:
         Behaviour of the Enter key.
 
         Auto indent after newline/Enter.
-        (When not in Vi navigaton mode, and when multiline is enabled.)
+        (When not in Vi navigation mode, and when multiline is enabled.)
         """
         b = event.current_buffer
         empty_lines_required = python_input.accept_input_on_enter or 10000
@@ -218,7 +220,7 @@ def load_python_bindings(python_input: "PythonInput") -> KeyBindings:
     return bindings
 
 
-def load_sidebar_bindings(python_input: "PythonInput") -> KeyBindings:
+def load_sidebar_bindings(python_input: PythonInput) -> KeyBindings:
     """
     Load bindings for the navigation in the sidebar.
     """
@@ -273,7 +275,7 @@ def load_sidebar_bindings(python_input: "PythonInput") -> KeyBindings:
     return bindings
 
 
-def load_confirm_exit_bindings(python_input: "PythonInput") -> KeyBindings:
+def load_confirm_exit_bindings(python_input: PythonInput) -> KeyBindings:
     """
     Handle yes/no key presses when the exit confirmation is shown.
     """

@@ -3,6 +3,7 @@ Configuration example for ``ptpython``.
 
 Copy this file to $XDG_CONFIG_HOME/ptpython/config.py
 On Linux, this is: ~/.config/ptpython/config.py
+On macOS, this is: ~/Library/Application Support/ptpython/config.py
 """
 from prompt_toolkit.filters import ViInsertMode
 from prompt_toolkit.key_binding.key_processor import KeyPress
@@ -49,7 +50,7 @@ def configure(repl):
     # Swap light/dark colors on or off
     repl.swap_light_and_dark = False
 
-    # Highlight matching parethesis.
+    # Highlight matching parentheses.
     repl.highlight_matching_parenthesis = True
 
     # Line wrapping. (Instead of horizontal scrolling.)
