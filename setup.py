@@ -27,6 +27,7 @@ setup(
     ],
     python_requires=">=3.7",
     classifiers=[
+        "License :: OSI Approved :: BSD License",
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.7",
         "Programming Language :: Python :: 3.7",
@@ -39,12 +40,14 @@ setup(
             "ptpython = ptpython.entry_points.run_ptpython:run",
             "ptipython = ptpython.entry_points.run_ptipython:run",
             "ptpython%s = ptpython.entry_points.run_ptpython:run" % sys.version_info[0],
-            "ptpython%s.%s = ptpython.entry_points.run_ptpython:run"
-            % sys.version_info[:2],
+            "ptpython{}.{} = ptpython.entry_points.run_ptpython:run".format(
+                *sys.version_info[:2]
+            ),
             "ptipython%s = ptpython.entry_points.run_ptipython:run"
             % sys.version_info[0],
-            "ptipython%s.%s = ptpython.entry_points.run_ptipython:run"
-            % sys.version_info[:2],
+            "ptipython{}.{} = ptpython.entry_points.run_ptipython:run".format(
+                *sys.version_info[:2]
+            ),
         ]
     },
     extras_require={

@@ -18,7 +18,7 @@ import types
 import warnings
 from dis import COMPILER_FLAG_NAMES
 from enum import Enum
-from typing import Any, Callable, ContextManager, Dict, Optional
+from typing import Any, Callable, ContextManager
 
 from prompt_toolkit.formatted_text import (
     HTML,
@@ -547,12 +547,12 @@ class PythonRepl(PythonInput):
                 tblist = tblist[line_nr:]
                 break
 
-        l = traceback.format_list(tblist)
-        if l:
-            l.insert(0, "Traceback (most recent call last):\n")
-        l.extend(traceback.format_exception_only(t, v))
+        tb_list = traceback.format_list(tblist)
+        if tb_list:
+            tb_list.insert(0, "Traceback (most recent call last):\n")
+        tb_list.extend(traceback.format_exception_only(t, v))
 
-        tb_str = "".join(l)
+        tb_str = "".join(tb_list)
 
         # Format exception and write to output.
         # (We use the default style. Most other styles result
@@ -630,23 +630,28 @@ def enable_deprecation_warnings() -> None:
     warnings.filterwarnings("default", category=DeprecationWarning, module="__main__")
 
 
-def run_config(
-    repl: PythonInput, config_file: str = "~/.config/ptpython/config.py"
-) -> None:
+DEFAULT_CONFIG_FILE = "~/.config/ptpython/config.py"
+
+
+def run_config(repl: PythonInput, config_file: str | None = None) -> None:
     """
     Execute REPL config file.
 
     :param repl: `PythonInput` instance.
     :param config_file: Path of the configuration file.
     """
+    explicit_config_file = config_file is not None
+
     # Expand tildes.
-    config_file = os.path.expanduser(config_file)
+    config_file = os.path.expanduser(
+        config_file if config_file is not None else DEFAULT_CONFIG_FILE
+    )
 
     def enter_to_continue() -> None:
         input("\nPress ENTER to continue...")
 
     # Check whether this file exists.
-    if not os.path.exists(config_file):
+    if not os.path.exists(config_file) and explicit_config_file:
         print("Impossible to read %r" % config_file)
         enter_to_continue()
         return

@@ -14,7 +14,7 @@ from typing import Iterable
 from warnings import warn
 
 from IPython import utils as ipy_utils
-from IPython.core.inputsplitter import IPythonInputSplitter
+from IPython.core.inputtransformer2 import TransformerManager
 from IPython.terminal.embed import InteractiveShellEmbed as _InteractiveShellEmbed
 from IPython.terminal.ipapp import load_default_config
 from prompt_toolkit.completion import (
@@ -38,6 +38,7 @@ from ptpython.prompt_style import PromptStyle
 
 from .completer import PythonCompleter
 from .python_input import PythonInput
+from .repl import PyCF_ALLOW_TOP_LEVEL_AWAIT
 from .style import default_ui_style
 from .validator import PythonValidator
 
@@ -65,7 +66,7 @@ class IPythonPrompt(PromptStyle):
 class IPythonValidator(PythonValidator):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.isp = IPythonInputSplitter()
+        self.isp = TransformerManager()
 
     def validate(self, document: Document) -> None:
         document = Document(text=self.isp.transform_cell(document.text))
@@ -210,6 +211,12 @@ class IPythonInput(PythonInput):
 
         self.ui_styles = {"default": Style.from_dict(style_dict)}
         self.use_ui_colorscheme("default")
+
+    def get_compiler_flags(self):
+        flags = super().get_compiler_flags()
+        if self.ipython_shell.autoawait:
+            flags |= PyCF_ALLOW_TOP_LEVEL_AWAIT
+        return flags
 
 
 class InteractiveShellEmbed(_InteractiveShellEmbed):
