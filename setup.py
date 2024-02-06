@@ -11,10 +11,18 @@ with open(os.path.join(os.path.dirname(__file__), "README.rst")) as f:
 setup(
     name="ptpython",
     author="Jonathan Slenders",
-    version="3.0.25",
+    version="3.0.26",
     url="https://github.com/prompt-toolkit/ptpython",
     description="Python REPL build on top of prompt_toolkit",
     long_description=long_description,
+    package_urls={
+        "Changelog": "https://github.com/prompt-toolkit/ptpython/blob/master/CHANGELOG",
+    },
+    project_urls={
+        "Bug Tracker": "https://github.com/prompt-toolkit/ptpython/issues",
+        "Source Code": "https://github.com/prompt-toolkit/ptpython",
+        "Changelog": "https://github.com/prompt-toolkit/ptpython/blob/master/CHANGELOG",
+    },
     packages=find_packages("."),
     package_data={"ptpython": ["py.typed"]},
     install_requires=[
