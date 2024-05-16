@@ -2,6 +2,7 @@
 Application for reading Python input.
 This can be used for creation of Python REPLs.
 """
+
 from __future__ import annotations
 
 from asyncio import get_running_loop
@@ -98,8 +99,7 @@ if TYPE_CHECKING:
     class _SupportsLessThan(Protocol):
         # Taken from typeshed. _T_lt is used by "sorted", which needs anything
         # sortable.
-        def __lt__(self, __other: Any) -> bool:
-            ...
+        def __lt__(self, __other: Any) -> bool: ...
 
 
 _T_lt = TypeVar("_T_lt", bound="_SupportsLessThan")
@@ -347,14 +347,6 @@ class PythonInput:
             "classic": ClassicPrompt(),
         }
 
-        self.get_input_prompt = lambda: self.all_prompt_styles[
-            self.prompt_style
-        ].in_prompt()
-
-        self.get_output_prompt = lambda: self.all_prompt_styles[
-            self.prompt_style
-        ].out_prompt()
-
         #: Load styles.
         self.code_styles: dict[str, BaseStyle] = get_all_code_styles()
         self.ui_styles = get_all_ui_styles()
@@ -424,6 +416,12 @@ class PythonInput:
                 self.app.editing_mode = EditingMode.VI
         else:
             self._app = None
+
+    def get_input_prompt(self) -> AnyFormattedText:
+        return self.all_prompt_styles[self.prompt_style].in_prompt()
+
+    def get_output_prompt(self) -> AnyFormattedText:
+        return self.all_prompt_styles[self.prompt_style].out_prompt()
 
     def _accept_handler(self, buff: Buffer) -> bool:
         app = get_app()
@@ -880,18 +878,18 @@ class PythonInput:
                     Option(
                         title="Min brightness",
                         description="Minimum brightness for the color scheme (default=0.0).",
-                        get_current_value=lambda: "%.2f" % self.min_brightness,
+                        get_current_value=lambda: f"{self.min_brightness:.2f}",
                         get_values=lambda: {
-                            "%.2f" % value: partial(self._set_min_brightness, value)
+                            f"{value:.2f}": partial(self._set_min_brightness, value)
                             for value in brightness_values
                         },
                     ),
                     Option(
                         title="Max brightness",
                         description="Maximum brightness for the color scheme (default=1.0).",
-                        get_current_value=lambda: "%.2f" % self.max_brightness,
+                        get_current_value=lambda: f"{self.max_brightness:.2f}",
                         get_values=lambda: {
-                            "%.2f" % value: partial(self._set_max_brightness, value)
+                            f"{value:.2f}": partial(self._set_max_brightness, value)
                             for value in brightness_values
                         },
                     ),
