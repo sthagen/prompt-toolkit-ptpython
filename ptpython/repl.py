@@ -362,7 +362,7 @@ class PythonRepl(PythonInput):
 
     def _store_eval_result(self, result: object) -> None:
         locals: dict[str, Any] = self.get_locals()
-        locals["_"] = locals["_%i" % self.current_statement_index] = result
+        locals["_"] = locals[f"_{self.current_statement_index}"] = result
 
     def get_compiler_flags(self) -> int:
         return super().get_compiler_flags() | PyCF_ALLOW_TOP_LEVEL_AWAIT
@@ -378,6 +378,10 @@ class PythonRepl(PythonInput):
         )
 
     def _handle_exception(self, e: BaseException) -> None:
+        # Required for pdb.post_mortem() to work.
+        t, v, tb = sys.exc_info()
+        sys.last_type, sys.last_value, sys.last_traceback = t, v, tb
+
         self._get_output_printer().display_exception(
             e,
             highlight=self.enable_syntax_highlighting,
