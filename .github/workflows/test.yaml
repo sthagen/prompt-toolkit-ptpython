@@ -14,23 +14,28 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install Dependencies
+      - name: Type Checking
         run: |
-          uv pip install . ruff mypy pytest readme_renderer
-          uv pip list
-      - name: Type Checker
+          uvx --with . mypy src/ptpython/
+          uvx --with . mypy examples/
+      - name: Code formatting
+        if: ${{ matrix.python-version == '3.13' }}
         run: |
-          mypy ptpython
-          ruff check .
-          ruff format --check .
-      - name: Run Tests
+          uvx ruff check .
+          uvx ruff format --check .
+      - name: Typos
+        if: ${{ matrix.python-version == '3.13' }}
         run: |
-          pytest tests/
+          uvx typos .
+      - name: Unit test
+        run: |
+          uvx --with . pytest tests/
       - name: Validate README.md
+        if: ${{ matrix.python-version == '3.13' }}
         # Ensure that the README renders correctly (required for uploading to PyPI).
         run: |
+          uv pip install readme_renderer
           python -m readme_renderer README.rst > /dev/null
