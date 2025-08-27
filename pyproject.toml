@@ -1,6 +1,6 @@
 [project]
 name = "ptpython"
-version = "3.0.30"
+version = "3.0.31"
 description = "Python REPL build on top of prompt_toolkit"
 readme = "README.rst"
 authors = [{ name = "Jonathan Slenders" }]
@@ -51,7 +51,7 @@ strict_optional = true
 
 
 [tool.ruff]
-target-version = "py37"
+target-version = "py38"
 lint.select = [
     "E",  # pycodestyle errors
     "W",  # pycodestyle warnings
